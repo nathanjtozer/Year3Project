@@ -1,0 +1,542 @@
+---
+title: "Project - BT Distribution"
+author: "Nathan Tozer"
+date: "31/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Training Data Set
+training.df <- read.csv(file="TrainingDataSet.csv")
+training.df <- training.df[-c((37:42))][1:5270,]
+
+# Remove matches that didn't finish
+df <- training.df[training.df$Comment == 'Completed',]
+#df <- df[160:180,]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(df))){
+  
+  if (is.na(df$W1[i])){
+    df$W1[i] <- 0
+  }
+  if (is.na(df$W2[i])){
+    df$W2[i] <- 0
+    }
+  if (is.na(df$W3[i])){
+  df$W3[i] <- 0
+    }
+  if (is.na(df$W4[i])){
+    df$W4[i] <- 0
+    }
+  if (is.na(df$W5[i])){
+    df$W5[i] <- 0
+  }
+  if (is.na(df$L1[i])){
+    df$L1[i] <- 0
+  }
+  if (is.na(df$L2[i])){
+    df$L2[i] <- 0
+    }
+  if (is.na(df$L3[i])){
+  df$L3[i] <- 0
+    }
+  if (is.na(df$L4[i])){
+    df$L4[i] <- 0
+    }
+  if (is.na(df$L5[i])){
+    df$L5[i] <- 0
+  }
+}
+
+```
+
+```{r}
+# Look at what players played in the data
+update.players <- function(dat){
+  appearences <- table((c(dat$Loser,dat$Winner)))
+  playerlist <- unique(c(dat$Loser,dat$Winner))
+  players <- c('Unknown')
+
+# Each player must play at least 15 games to be included by name
+  for (i in (1:length(playerlist))){
+    if (unname(appearences[playerlist[i]]) > 14){
+      players <- c(players, playerlist[i])
+    } else {
+     players <- c(players)
+    }
+  }
+  return(players)
+}
+```
+
+```{r}
+# Win Probability
+winprob <- function(mu, sd){
+  
+  K <- 100
+  vals <- rep(NA, K-1)
+
+  for (i in (1:K-1)){
+    z <- qnorm(i/K)*sd + mu
+    vals[i] <- 1/(1+exp(-z))
+  }
+
+  return(1/(K-1) * sum(vals))
+}
+```
+
+```{r}
+#mu.x <- seq(-20,20,length.out = 1000)
+#sd.x <- seq(0,32, length.out = 1000)
+#
+#constant.sd <- function(mu, sd){
+#  y <- rep(NA, length(mu))
+#  for (i in (1:length(y))){
+#    y[i] <- winprob(mu[i],sd)
+#  }
+#  return(y)
+#}
+#
+#constant.mu <- function(mu, sd){
+#  y <- rep(NA, length(sd))
+#  for (i in (1:length(y))){
+#    y[i] <- winprob(mu,sd[i])
+#  }
+#  return(y)
+#}
+#
+#
+#png('winprob.png', width=1024, height=1024)
+#par(mfrow=c(2,1))
+#
+#plot(mu.x,constant.sd(mu.x,16),type='l', ylim=c(0,1), main="Win Probability - Constant Standard Deviation", ylab="Probability of winning a match", #xlab=expression(mu), col='blue', cex.main=1.6, cex.lab=1.6, cex.axis=1.6)
+#lines(mu.x,constant.sd(mu.x,8), col='red')
+#lines(mu.x,constant.sd(mu.x,1))
+#legend('topleft',legend=c(expression(sigma == 1),expression(sigma==8),expression(sigma==16)), col=c('black','red','blue'), lty=c(1,1,1), cex=1.6)
+#
+#plot(sd.x,constant.mu(5,sd.x),type='l', ylim=c(0,1), main="Win Probability - Constant Mean", ylab="Probability of winning a match", #xlab=expression(sigma),col='blue', cex.main=1.6, cex.lab=1.6, cex.axis=1.6)
+#lines(sd.x,constant.mu(1,sd.x), col='red')
+#lines(sd.x,constant.mu(0,sd.x))
+#lines(sd.x,constant.mu(-1,sd.x), lty='dotted', col='red')
+#lines(sd.x,constant.mu(-5,sd.x), lty='dotted', col='blue')
+#legend('topright',legend=c(expression(mu == 0),expression(mu==1),expression(mu==-1),expression(mu==5), expression(mu==-5)), #col=c('black','red','red','blue','blue'), lty=c(1,1,3,1,3), cex=1.6)
+#dev.off()
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result
+BT.result <- function(players, parameters, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  p <- length(players)
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.mean = parameters[winner.index]
+    winner.sd = parameters[p + winner.index]
+    winner.games <- df$W1[i] + df$W2[i] + df$W3[i] + df$W4[i] + df$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.mean = parameters[loser.index]
+    loser.sd = parameters[p + loser.index]
+    loser.games <- df$L1[i] + df$L2[i] + df$L3[i] + df$L4[i] + df$L5[i]
+    
+    mu <- winner.mean - loser.mean
+    sigma.sqd <- winner.sd^2 + loser.sd^2
+
+    term <- log(winprob(mu, sqrt(sigma.sqd)))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Performs the optimization of strength parameters
+update.parameters <- function(dat, modelfunc){
+ 
+  players <- update.players(dat)
+  initial.guess <- c(rep(0, length(players)), rep(1, length(players)))
+  fed.index <- which(players == 'Federer R.')
+  unknown.index <- which(players == 'Unknown')
+  lbound <- rep(0, 2*length(players))
+  lbound[fed.index] <- 0.999999999
+  lbound[unknown.index] <- -0.000000001
+
+  ubound <- c(rep(1, length(players)), rep(Inf, length(players)))
+  ubound[fed.index] <- 1.000000001
+  ubound[unknown.index] <- 0.000000001
+
+  
+  print(length(players))
+  print(length(initial.guess))
+
+  updated.parameters <- optim(initial.guess, modelfunc, dat=dat, players=players, lower = lbound, upper = ubound ,method = "L-BFGS-B")$par
+  
+  return(matrix(c(players, updated.parameters), ncol = 3))
+}
+```
+
+```{r}
+# Importing the results that we wish to predict with our model
+test.df <- read.csv(file="TestDataSet.csv")
+test.df <- test.df[-c((39:42))]
+test.df <- test.df[1:2610,]
+
+# Again we only consider matches that where won by tennis alone
+test.df <- test.df[test.df$Comment == 'Completed',]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(test.df))){
+  
+  if (is.na(test.df$W1[i])){
+    test.df$W1[i] <- 0
+  }
+  if (is.na(test.df$W2[i])){
+    test.df$W2[i] <- 0
+    }
+  if (is.na(test.df$W3[i])){
+  test.df$W3[i] <- 0
+    }
+  if (is.na(test.df$W4[i])){
+    test.df$W4[i] <- 0
+    }
+  if (is.na(test.df$W5[i])){
+    test.df$W5[i] <- 0
+  }
+  if (is.na(test.df$L1[i])){
+    test.df$L1[i] <- 0
+  }
+  if (is.na(test.df$L2[i])){
+    test.df$L2[i] <- 0
+    }
+  if (is.na(test.df$L3[i])){
+    test.df$L3[i] <- 0
+    }
+  if (is.na(test.df$L4[i])){
+    test.df$L4[i] <- 0
+    }
+  if (is.na(test.df$L5[i])){
+    test.df$L5[i] <- 0
+  }
+}
+```
+
+```{r}
+# Given some test data, this performs the predictions
+analysis <- function(players, mean, sd, testdata, win.prob){
+  
+  M <- nrow(testdata)
+  match.info <- c()
+  p <- length(players)
+
+  for (i in (1:M)){
+    
+# Actual winner - our model does not know this is the winner
+    winner = testdata$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.mean = mean[winner.index]
+    winner.sd = abs(sd[winner.index])
+   
+# Actual loser - our model does not know this is the loser
+    loser = testdata$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.mean = mean[loser.index]
+    loser.sd = abs(sd[loser.index])
+    
+    if (winner.index == which(players == 'Unknown') & loser.index == which(players == 'Unknown')){
+      loser.sd <- 0
+      winner.sd <- 0
+    }    
+    
+# Calculating the implied bookmaker probabilities
+    winner.av.bodds <- (testdata$B365W[i] + testdata$EXW[i] + testdata$LBW[i] + testdata$PSW[i])/4
+    winner.av.bprob <- 1/winner.av.bodds
+    
+    loser.av.bodds <- (testdata$B365L[i] + testdata$EXL[i] + testdata$LBL[i] + testdata$PSL[i])/4
+    loser.av.bprob <- 1/loser.av.bodds
+    
+    winner.implied.bprob <- winner.av.bprob / (winner.av.bprob + loser.av.bprob)
+    loser.implied.bprob <- loser.av.bprob / (winner.av.bprob + loser.av.bprob)
+    
+# Predicted probability that the actual winner wins
+    pred.win.prob <- win.prob(winner.mean - loser.mean, sqrt(winner.sd^2 + loser.sd^2))
+    
+# Predicted probability that the actual loser wins
+    pred.lose.prob <- win.prob(loser.mean - winner.mean, sqrt(winner.sd^2 + loser.sd^2))
+    
+# If the above two are the same, we chose a winner at random
+    if (pred.win.prob == pred.lose.prob){
+      pred.winner <- sample(c(winner,loser), 1, prob=c(0.5,0.5))
+    } else {
+      pred.winner <- ifelse(pred.win.prob > pred.lose.prob, winner, loser)
+    }
+    
+# Returns value 1 if our prediction is correct.
+    is.pred.right <- ifelse(winner == pred.winner, 1, 0)
+    
+    
+# Stores the calculated value every match in a vector
+    match.info <- c(match.info,winner.av.bodds,winner.implied.bprob, pred.win.prob, winner, is.pred.right, loser, pred.lose.prob, loser.implied.bprob, loser.av.bodds)
+    
+  }
+  
+# Turn the above vector into a dataframe  
+  analysis.df <- as.data.frame(t(matrix(match.info, nrow = 9)))
+  colnames(analysis.df) <- c('AverageWinnerBOdds','BookiesProbActualWinner','PredProbActualWinner','ActualWinner', 'IsPredRight','ActualLoser','PredProbActualLoser','BookiesProbActualLoser','AverageLoserBOdds')
+  
+  analysis.df$PredProbActualWinner = as.numeric(analysis.df$PredProbActualWinner)
+  analysis.df$PredProbActualLoser = as.numeric(analysis.df$PredProbActualLoser)
+  analysis.df$IsPredRight = as.numeric(analysis.df$IsPredRight)
+  analysis.df$AverageWinnerBOdds = as.numeric(analysis.df$AverageWinnerBOdds)
+  analysis.df$AverageLoserBOdds = as.numeric(analysis.df$AverageLoserBOdds)
+  analysis.df$BookiesProbActualWinner = as.numeric(analysis.df$BookiesProbActualWinner)
+  analysis.df$BookiesProbActualLoser = as.numeric(analysis.df$BookiesProbActualLoser)
+  
+  
+  return(analysis.df)
+}
+```
+
+```{r}
+# This section calculates various scoring measures for our model
+
+# Prediction accuracy of the model
+pred.acc <- function(analysis.df){
+  return(sum(analysis.df$IsPredRight)*100/nrow(analysis.df))
+}
+
+# Win Probabilities
+win.prob <- function(analysis.df){
+  return(as.numeric(analysis.df$PredProbActualWinner))
+}
+
+# Average probability assigned to the actual winner
+av.win.prob <- function(analysis.df){
+  return(mean(analysis.df$PredProbActualWinner))
+}
+
+# Log Win Probabilities
+log.win.prob <- function(analysis.df){
+  return(log(analysis.df$PredProbActualWinner))
+}
+
+# Average log probability assigned to the actual winner
+av.log.win.prob <- function(analysis.df){
+  return(mean(log(analysis.df$PredProbActualWinner)))
+}
+
+# Returns a calibration graph of the model
+calibration <- function(analysis.df, name){
+
+  p.bins <- seq(from=0, to=1, length.out= 64)
+  
+  bins <- cut(analysis.df$PredProbActualWinner, breaks = p.bins, include.lowest = TRUE, right = FALSE, ordered_result = TRUE)
+  count <- unname(summary(bins))
+  
+  j <- length(count)
+  
+  xvals <- seq(from=0.5,to=1,length.out=32)
+  k <- length(xvals)
+  yvals <- rep(0,length(xvals))
+  
+  for (i in (1:k)){
+    yvals[k+1-i] <- count[j+1-i]/(count[i]+count[j+1-i])
+  }
+  png(paste('Calibration', name, '.png', sep=""))
+  scatter.smooth(x=xvals, y=yvals, main= "Model Calibration", xlab="Predicted Probability", ylab="Proportion of Correct Predictions")
+  lines(xvals,xvals,col='red')
+  dev.off()
+}
+
+# Return on investment when placing a pass-line bet when our model is more confident then the bookmakers
+roi <- function(analysis.df){
+  new.analysis.df <- analysis.df[!is.na(analysis.df$BookiesProbActualWinner),]
+  M <- nrow(new.analysis.df)
+  spent <- 0
+  won <- 0
+  
+  for (i in (1:M)){
+    if (new.analysis.df$IsPredRight[i] == 1){
+      if (new.analysis.df$PredProbActualWinner[i] > as.numeric(new.analysis.df$BookiesProbActualWinner[i])){
+        spent <- spent + 1
+        won <- won + new.analysis.df$AverageWinnerBOdds[i] 
+      }
+    } else {
+      if (new.analysis.df$PredProbActualLoser[i] > as.numeric(new.analysis.df$BookiesProbActualLoser[i])){
+        spent <- spent + 1
+      }
+    }
+  }
+  return((won-spent)*100/spent)
+}
+
+# Brier Scores
+brier <- function(analysis.df){
+  return(0.5*(((analysis.df$PredProbActualWinner - 1)^2)+((analysis.df$PredProbActualLoser)^2)))
+}
+
+# Average Brier Score
+av.brier <- function(analysis.df){
+  briers <- 0.5*(((analysis.df$PredProbActualWinner - 1)^2)+((analysis.df$PredProbActualLoser)^2))
+  return(mean(briers))
+}
+
+# spherical Scores
+spherical <- function(analysis.df){
+  return(-1*(analysis.df$PredProbActualWinner)/(sqrt(analysis.df$PredProbActualWinner^2 + analysis.df$PredProbActualLoser^2)))
+}
+
+# Average Spherical Score
+av.spherical <- function(analysis.df){
+  sphericals <- -1*(analysis.df$PredProbActualWinner)/(sqrt(analysis.df$PredProbActualWinner^2 + analysis.df$PredProbActualLoser^2))
+  return(mean(sphericals))
+}
+```
+
+```{r}
+# This function combines all the above functions, and also allows the test data set to be partition and strengths re-estimated for more accurate results
+simulate <- function(histdata, testdata, sections, modelfunc, win.prob){
+  
+# The list that will be returned
+  output.list <- list()
+  
+# Partitioning the test data set
+  M <- nrow(testdata)
+  part.size <- M%/%sections
+    
+  for (i in 1:sections){
+    assign(paste("testdata", i, sep = ""), testdata[((1+(i-1)*part.size):(i*part.size)),])
+  }
+  
+  if (sections*part.size != M){
+    remainder <- testdata[((1+sections*part.size):M),]
+    assign(paste("testdata", sections, sep = ""), testdata[((1+(sections-1)*part.size):M),])
+  }
+
+  pastdata <- histdata
+  
+  analysis.df <- data.frame(matrix(ncol=5,nrow=0))
+  colnames(analysis.df) <- c('PredProbActualWinner','ActualWinner', 'IsPredRight','ActualLoser','PredProbActualLoser')
+  
+# This next section of code performs the predictions for the model of interest  
+  
+# We have to consider surface models differently
+  if (deparse(substitute(modelfunc)) == 'BT.result.time.surface'){
+    
+    for (i in 1:sections){
+      
+      hard.court <- update.parameters(pastdata, BT.result.time.hard)
+      clay.court <- update.parameters(pastdata, BT.result.time.clay)
+      grass.court <- update.parameters(pastdata, BT.result.time.grass)
+      
+      hard.mean <- as.numeric(hard.court[,2])
+      clay.mean <- as.numeric(clay.court[,2])
+      grass.mean <- as.numeric(grass.court[,2])
+      
+      hard.sd <- abs(as.numeric(hard.court[,3]))
+      clay.sd <- abs(as.numeric(clay.court[,3]))
+      grass.sd <- abs(as.numeric(grass.court[,3]))
+      
+      pastdata <- rbind(pastdata, get(paste("testdata", i, sep="")))
+      players <- hard.court[,1]
+      
+      assign(paste("testdata.hard", i, sep=""), get(paste("testdata", i, sep=""))[get(paste("testdata", i, sep=""))$Surface == 'Hard',])
+      assign(paste("testdata.clay", i, sep=""), get(paste("testdata", i, sep=""))[get(paste("testdata", i, sep=""))$Surface == 'Clay',])
+      assign(paste("testdata.grass", i, sep=""), get(paste("testdata", i, sep=""))[get(paste("testdata", i, sep=""))$Surface == 'Grass',])
+
+      if (nrow(get(paste("testdata.hard", i, sep=""))) != 0){
+        analysis.hard <- analysis(players, hard.mean, hard.sd, get(paste("testdata.hard", i, sep="")), win.prob)
+        analysis.df <- rbind(analysis.df, analysis.hard)
+      }
+      if (nrow(get(paste("testdata.clay", i, sep=""))) != 0){
+        analysis.clay <- analysis(players, clay.mean, clay.sd, get(paste("testdata.clay", i, sep="")), win.prob)
+        analysis.df <- rbind(analysis.df, analysis.clay)
+      }
+      if (nrow(get(paste("testdata.grass", i, sep=""))) != 0){
+        analysis.grass <- analysis(players, grass.mean, grass.sd, get(paste("testdata.grass", i, sep="")), win.prob)
+        analysis.df <- rbind(analysis.df, analysis.grass)
+      }
+
+    }
+      
+      hard.strengths.df <-data.frame(players, hard.mean, hard.sd)
+      clay.strengths.df <-data.frame(players, clay.mean, clay.sd)
+      grass.strengths.df <-data.frame(players, grass.mean, grass.sd)
+      
+      colnames(hard.strengths.df) <- c('Players - (Hard Court)','Mean','Standard Deviation')
+      colnames(clay.strengths.df) <- c('Players - (Clay Court)','Mean','Standard Deviation')
+      colnames(grass.strengths.df) <- c('Players - (Grass Court)','Mean','Standard Deviation')
+      
+      hard.strengths.df <- hard.strengths.df[order(-hard.strengths.df$Mean),, drop=FALSE]
+      clay.strengths.df <- clay.strengths.df[order(-clay.strengths.df$Mean),, drop=FALSE]
+      grass.strengths.df <- grass.strengths.df[order(-grass.strengths.df$Mean),, drop=FALSE]
+      
+      output.list$HardCourtStrength <- hard.strengths.df
+      output.list$ClayCourtStrength <- clay.strengths.df
+      output.list$GrassCourtStrength <- grass.strengths.df
+    
+  } else {
+  
+    for (i in 1:sections){
+      player.parameters <- update.parameters(pastdata, modelfunc)
+      pastdata <- rbind(pastdata, get(paste("testdata", i, sep="")))
+      players <- player.parameters[,1]
+      mean.strength <- as.numeric(player.parameters[,2])
+      sd.strength <- abs(as.numeric(player.parameters[,3]))
+      analysis.sec <- analysis(players, mean.strength, sd.strength, get(paste("testdata",i, sep="")), win.prob)
+      analysis.df <- rbind(analysis.df, analysis.sec)
+    
+    }
+    
+# The latest normalized strength estimates for the players
+    strengths.df <- data.frame(players, mean.strength, sd.strength)
+    colnames(strengths.df) <- c('Players', 'Mean', 'Standard Deviation')
+    strengths.df <- strengths.df[order(-strengths.df$Mean),,drop=FALSE]
+    output.list$strengths <- strengths.df
+  }
+
+# Scoring rule estimates for the model
+  
+  if (grepl("synth",deparse(substitute(testdata)))){
+    vals <- matrix(c(pred.acc(analysis.df), av.win.prob(analysis.df), av.log.win.prob(analysis.df), av.brier(analysis.df), av.spherical(analysis.df)), ncol=1, byrow=TRUE)
+    colnames(vals) <- c(deparse(substitute(modelfunc)))
+    rownames(vals) <- c('Prediction Accuracy', 'Average Probability of Actual Winner', 'Avergae log Probability of Actual Winner', 'Average Brier Score', 'Average Spherical Score')
+  } else {
+      vals <- matrix(c(pred.acc(analysis.df), av.win.prob(analysis.df), av.log.win.prob(analysis.df), av.brier(analysis.df), av.spherical(analysis.df), roi(analysis.df)),  ncol=1, byrow=TRUE)
+      colnames(vals) <- c(deparse(substitute(modelfunc)))
+      rownames(vals) <- c('Prediction Accuracy', 'Average Probability of Actual Winner', 'Avergae log Probability of Actual Winner','Average Brier Score', 'Average Spherical Score','ROI')
+  }
+  
+# Detailed Scoring Rules
+  det.scoring <- data.frame(brier(analysis.df), spherical(analysis.df))
+  colnames(det.scoring) <- c('Brier Score','Spherical Score')
+  
+
+# Plot the model calibration
+  #calibration(analysis.df, as.character(deparse(substitute(modelfunc))))
+  
+# Output the results
+  output.list$analysis <- analysis.df
+  output.list$scoring <- as.data.frame(vals)
+  output.list$detailedScoring <- det.scoring
+  
+  return(output.list)
+}
+```
+
+```{r}
+sim.BT.result <- simulate(df, test.df, 2, BT.result, winprob)
+sim.BT.result
+```
