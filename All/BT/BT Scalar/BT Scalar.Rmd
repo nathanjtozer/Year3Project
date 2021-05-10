@@ -1,0 +1,1408 @@
+---
+title: "Project"
+author: "Nathan Tozer"
+date: "31/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Training Data Set
+training.df <- read.csv(file="TrainingDataSet.csv")
+training.df <- training.df[-c((37:42))][1:5270,]
+
+# Remove matches that didn't finish
+df <- training.df[training.df$Comment == 'Completed',]
+#df <- df[160:180,]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(df))){
+  
+  if (is.na(df$W1[i])){
+    df$W1[i] <- 0
+  }
+  if (is.na(df$W2[i])){
+    df$W2[i] <- 0
+    }
+  if (is.na(df$W3[i])){
+  df$W3[i] <- 0
+    }
+  if (is.na(df$W4[i])){
+    df$W4[i] <- 0
+    }
+  if (is.na(df$W5[i])){
+    df$W5[i] <- 0
+  }
+  if (is.na(df$L1[i])){
+    df$L1[i] <- 0
+  }
+  if (is.na(df$L2[i])){
+    df$L2[i] <- 0
+    }
+  if (is.na(df$L3[i])){
+  df$L3[i] <- 0
+    }
+  if (is.na(df$L4[i])){
+    df$L4[i] <- 0
+    }
+  if (is.na(df$L5[i])){
+    df$L5[i] <- 0
+  }
+}
+
+```
+
+```{r}
+# Look at what players played in the data
+update.players <- function(dat){
+  appearences <- table((c(dat$Loser,dat$Winner)))
+  playerlist <- unique(c(dat$Loser,dat$Winner))
+  players <- c('Unknown')
+
+# Each player must play at least 15 games to be included by name
+  for (i in (1:length(playerlist))){
+    if (unname(appearences[playerlist[i]]) > 14){
+      players <- c(players, playerlist[i])
+    } else {
+     players <- c(players)
+    }
+  }
+  return(players)
+}
+```
+
+```{r}
+# Guess at initial player strengths - the start point for optimization
+initial.strengths <- function(dat){
+  
+  players <- update.players(dat)
+  appearences <- table((c(dat$Loser,dat$Winner)))
+
+  most_matches <- max(appearences)
+  p <- length(players)
+  strengths0 <- rep(1, p)
+  
+  for (i in (1:p-1)){
+    strengths0[i+1] <- appearences[players[i+1]]/most_matches
+  }
+  
+# Initial guess of strength of players who played less than 15 matches  
+  strengths0[1] <- 10/most_matches
+  return(strengths0)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result
+BT.result <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game
+BT.game <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+    
+    term = winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength)))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay
+BT.result.time <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay
+BT.game.time <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay, for hard surfaces
+BT.result.time.hard <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.5
+    }
+    
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*S*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay, for clay surfaces
+BT.result.time.clay <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.01
+    }
+    
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*S*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay, for grass surfaces
+BT.result.time.grass <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.5
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.01
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 1
+    }
+    
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*S*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay, for hard surfaces
+BT.result.hard <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.5
+    }
+    
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*S*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay, for clay surfaces
+BT.result.clay <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.01
+    }
+    
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*S*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model using the final win/lose result, including time decay, for grass surfaces
+BT.result.grass <- function(players, strengths, dat){
+  
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.5
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.01
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 1
+    }
+    
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+    term = -1*S*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*log(1+exp(loser.strength-winner.strength))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay, for hard surfaces
+BT.game.time.hard <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.5
+    }
+  }
+    
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = S*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay, for clay surfaces
+BT.game.time.clay <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.01
+    }
+  }
+    
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = S*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay, for grass surfaces
+BT.game.time.grass <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.5
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.01
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 1
+    }
+  }
+    
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = S*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay, for hard surfaces
+BT.game.hard <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.5
+    }
+  }
+    
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = S*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay, for clay surfaces
+BT.game.clay <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.1
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 1
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 0.01
+    }
+  }
+    
+  
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = S*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Returns the negative of likelihood for the Bradley Terry model, which considers the result of each game, including time decay, for grass surfaces
+BT.game.grass <- function(players, strengths, dat){
+    
+  N <- nrow(dat)
+  summation = 0
+  
+  dates <- as.Date(dat$Date, format = '%d/%m/%y')
+  today <- max(dates)
+  lambda <- 365
+  
+  for (i in (1:N)){
+    term = 0
+    
+    if (dat$Surface[i] == 'Hard'){
+      S <- 0.5
+    }
+    if (dat$Surface[i] == 'Clay'){
+      S <- 0.01
+    }
+    if (dat$Surface[i] == 'Grass'){
+      S <- 1
+    }
+  }
+    
+  for (i in (1:N)){
+    term = 0
+    winner = dat$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+    winner.games <- dat$W1[i] + dat$W2[i] + dat$W3[i] + dat$W4[i] + dat$W5[i]
+    
+    loser = dat$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    loser.games <- dat$L1[i] + dat$L2[i] + dat$L3[i] + dat$L4[i] + dat$L5[i]
+
+    term = S*exp(-1*(1/lambda)*(as.numeric(today - dates[i])))*(winner.games*winner.strength + loser.games*loser.strength - ((winner.games+loser.games)*log(exp(winner.strength)+exp(loser.strength))))
+    
+    summation = summation + term
+  }
+  
+  return(-1*summation)
+}
+```
+
+```{r}
+# Performs the optimization of strength parameters
+update.strengths <- function(dat, modelfunc){
+ 
+  players <- update.players(dat)
+  strengths <- initial.strengths(dat)
+  
+  print(length(strengths))
+  
+  updated.strengths <- optim(strengths, modelfunc, dat=dat, players=players, method = "L-BFGS-B")$par
+  
+  return(matrix(c(players, updated.strengths), nrow = length(players)))
+}
+```
+
+TESTING OUR MODEL
+
+```{r}
+# Importing the results that we wish to predict with our model
+test.df <- read.csv(file="TestDataSet.csv")
+test.df <- test.df[-c((39:42))]
+test.df <- test.df[1:2610,]
+
+# Again we only consider matches that where won by tennis alone
+test.df <- test.df[test.df$Comment == 'Completed',]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(test.df))){
+  
+  if (is.na(test.df$W1[i])){
+    test.df$W1[i] <- 0
+  }
+  if (is.na(test.df$W2[i])){
+    test.df$W2[i] <- 0
+    }
+  if (is.na(test.df$W3[i])){
+  test.df$W3[i] <- 0
+    }
+  if (is.na(test.df$W4[i])){
+    test.df$W4[i] <- 0
+    }
+  if (is.na(test.df$W5[i])){
+    test.df$W5[i] <- 0
+  }
+  if (is.na(test.df$L1[i])){
+    test.df$L1[i] <- 0
+  }
+  if (is.na(test.df$L2[i])){
+    test.df$L2[i] <- 0
+    }
+  if (is.na(test.df$L3[i])){
+    test.df$L3[i] <- 0
+    }
+  if (is.na(test.df$L4[i])){
+    test.df$L4[i] <- 0
+    }
+  if (is.na(test.df$L5[i])){
+    test.df$L5[i] <- 0
+  }
+}
+```
+
+```{r}
+# Probability of winning the match, when using a win/lose model
+BT.result.winprob <- function(strength.i, strength.j){
+  return(exp(strength.i) / (exp(strength.i)+exp(strength.j)))
+}
+```
+
+```{r}
+# Probability of winning a tennis match given the probability of winning a game
+game.winprob <- function(g){
+  
+  s <- (g^6)*(1+6*(1-g)+21*(1-g)^2+56*(1-g)^3+126*(1-g)^4+252*(1-g)^5)
+  m <- (s^3)*(1+3*(1-s)+6*(1-s)^2)
+  return(m)
+}
+
+# Probability of winning the match, when using a game-based model
+BT.game.winprob <- function(strength.i, strength.j){
+  
+  g <- exp(strength.i) / (exp(strength.i)+exp(strength.j))
+  prob <- game.winprob(g)
+  
+  return(prob)
+}
+```
+
+```{r}
+# Given some test data, this performs the predictions
+analysis <- function(players, strengths, testdata, win.prob){
+  
+  M <- nrow(testdata)
+  match.info <- c()
+
+  for (i in (1:M)){
+    
+# Actual winner - our model does not know this is the winner
+    winner = testdata$Winner[i]
+    winner.index = ifelse(winner %in% players ,which(players == winner), which(players == 'Unknown'))
+    winner.strength = strengths[winner.index]
+   
+# Actual loser - our model does not know this is the loser
+    loser = testdata$Loser[i]
+    loser.index = ifelse(loser %in% players ,which(players == loser), which(players == 'Unknown'))
+    loser.strength = strengths[loser.index]
+    
+# Calculating the implied bookmaker probabilities
+    winner.av.bodds <- (testdata$B365W[i] + testdata$EXW[i] + testdata$LBW[i] + testdata$PSW[i])/4
+    winner.av.bprob <- 1/winner.av.bodds
+    
+    loser.av.bodds <- (testdata$B365L[i] + testdata$EXL[i] + testdata$LBL[i] + testdata$PSL[i])/4
+    loser.av.bprob <- 1/loser.av.bodds
+    
+    winner.implied.bprob <- winner.av.bprob / (winner.av.bprob + loser.av.bprob)
+    loser.implied.bprob <- loser.av.bprob / (winner.av.bprob + loser.av.bprob)
+    
+# Predicted probability that the actual winner wins
+    pred.win.prob <- win.prob(winner.strength, loser.strength)
+    
+# Predicted probability that the actual loser wins
+    pred.lose.prob <- 1- pred.win.prob
+    
+# If the above two are the same, we chose a winner at random
+  #  if (pred.win.prob == pred.lose.prob){
+  #    pred.winner <- sample(c(winner,loser), 1, prob=c(0.5,0.5))
+  #  } else {
+  #    pred.winner <- ifelse(pred.win.prob > pred.lose.prob, winner, loser)
+  #  }
+    
+  pred.winner <- sample(c(winner,loser), 1, prob=c(pred.win.prob, pred.lose.prob))
+    
+# Returns value 1 if our prediction is correct.
+    is.pred.right <- ifelse(winner == pred.winner, 1, 0)
+    
+    
+    
+# Stores the calculated value every match in a vector
+    match.info <- c(match.info,winner.av.bodds,winner.implied.bprob, pred.win.prob, winner, is.pred.right, loser, pred.lose.prob, loser.implied.bprob, loser.av.bodds)
+    
+  }
+  
+# Turn the above vector into a dataframe  
+  analysis.df <- as.data.frame(t(matrix(match.info, nrow = 9)))
+  colnames(analysis.df) <- c('AverageWinnerBOdds','BookiesProbActualWinner','PredProbActualWinner','ActualWinner', 'IsPredRight','ActualLoser','PredProbActualLoser','BookiesProbActualLoser','AverageLoserBOdds')
+  
+  analysis.df$PredProbActualWinner = as.numeric(analysis.df$PredProbActualWinner)
+  analysis.df$PredProbActualLoser = as.numeric(analysis.df$PredProbActualLoser)
+  analysis.df$IsPredRight = as.numeric(analysis.df$IsPredRight)
+  analysis.df$AverageWinnerBOdds = as.numeric(analysis.df$AverageWinnerBOdds)
+  analysis.df$AverageLoserBOdds = as.numeric(analysis.df$AverageLoserBOdds)
+  analysis.df$BookiesProbActualWinner = as.numeric(analysis.df$BookiesProbActualWinner)
+  analysis.df$BookiesProbActualLoser = as.numeric(analysis.df$BookiesProbActualLoser)
+  
+  
+  return(analysis.df)
+}
+```
+
+```{r}
+# This section calculates various scoring measures for our model
+
+# Prediction accuracy of the model
+pred.acc <- function(analysis.df){
+  return(sum(analysis.df$IsPredRight)*100/nrow(analysis.df))
+}
+
+# Average probability assigned to the actual winner
+av.win.prob <- function(analysis.df){
+  return(mean(analysis.df$PredProbActualWinner))
+}
+
+# Average log probability assigned to the actual winner
+av.log.win.prob <- function(analysis.df){
+  return(mean(log(analysis.df$PredProbActualWinner)))
+}
+
+# Returns a calibration graph of the model
+calibration <- function(analysis.df, name){
+
+  p.bins <- seq(from=0, to=1, length.out= 64)
+  
+  bins <- cut(analysis.df$PredProbActualWinner, breaks = p.bins, include.lowest = TRUE, right = FALSE, ordered_result = TRUE)
+  count <- unname(summary(bins))
+  
+  j <- length(count)
+  
+  xvals <- seq(from=0.5,to=1,length.out=32)
+  k <- length(xvals)
+  yvals <- rep(0,length(xvals))
+  
+  for (i in (1:k)){
+    yvals[k+1-i] <- count[j+1-i]/(count[i]+count[j+1-i])
+  }
+  png(paste('Calibration', name, '.png', sep=""))
+  scatter.smooth(x=xvals, y=yvals, main= "Model Calibration", xlab="Predicted Probability", ylab="Probability of Prediction Being Correct")
+  lines(xvals,xvals,col='red')
+  dev.off()
+}
+
+# Return on investment when placing a pass-line bet when our model is more confident then the bookmakers
+roi <- function(analysis.df){
+  new.analysis.df <- analysis.df[!is.na(analysis.df$BookiesProbActualWinner),]
+  M <- nrow(new.analysis.df)
+  wealth <- M
+  
+  for (i in (1:M)){
+    if (new.analysis.df$IsPredRight[i] == 1){
+      if (new.analysis.df$PredProbActualWinner[i] > as.numeric(new.analysis.df$BookiesProbActualWinner[i])){
+        wealth <- wealth - 1 + new.analysis.df$AverageWinnerBOdds[i] 
+      }
+    } else {
+      if (new.analysis.df$PredProbActualLoser[i] > as.numeric(new.analysis.df$BookiesProbActualLoser[i])){
+        wealth <- wealth - 1
+      }
+    }
+  }
+  return((wealth-M)*100/M)
+}
+
+# Brier Scores
+brier <- function(analysis.df){
+  return(0.5*(((analysis.df$PredProbActualWinner - 1)^2)+((analysis.df$PredProbActualLoser)^2)))
+}
+
+# Average Brier Score
+av.brier <- function(analysis.df){
+  briers <- 0.5*(((analysis.df$PredProbActualWinner - 1)^2)+((analysis.df$PredProbActualLoser)^2))
+  return(mean(briers))
+}
+
+# spherical Scores
+spherical <- function(analysis.df){
+  return(-1*(analysis.df$PredProbActualWinner)/(sqrt(analysis.df$PredProbActualWinner^2 + analysis.df$PredProbActualLoser^2)))
+}
+
+# Average Spherical Score
+av.spherical <- function(analysis.df){
+  sphericals <- -1*(analysis.df$PredProbActualWinner)/(sqrt(analysis.df$PredProbActualWinner^2 + analysis.df$PredProbActualLoser^2))
+  return(mean(sphericals))
+}
+```
+
+```{r}
+# This function combines all the above functions, and also allows the test data set to be partition and strengths re-estimated for more accurate results
+simulate <- function(histdata, testdata, sections, modelfunc, win.prob){
+  
+# The list that will be returned
+  output.list <- list()
+  
+# Partitioning the test data set
+  M <- nrow(testdata)
+  part.size <- M%/%sections
+    
+  for (i in 1:sections){
+    assign(paste("testdata", i, sep = ""), testdata[((1+(i-1)*part.size):(i*part.size)),])
+  }
+  
+  if (sections*part.size != M){
+    remainder <- testdata[((1+sections*part.size):M),]
+    assign(paste("testdata", sections, sep = ""), testdata[((1+(sections-1)*part.size):M),])
+  }
+
+  pastdata <- histdata
+  analysis.df <- data.frame(matrix(ncol=5,nrow=0))
+  colnames(analysis.df) <- c('PredProbActualWinner','ActualWinner', 'IsPredRight','ActualLoser','PredProbActualLoser')
+  
+# This next section of code performs the predictions for the model of interest  
+  
+# We have to consider surface models differently
+  if (deparse(substitute(modelfunc)) == 'BT.result.time.surface' | deparse(substitute(modelfunc)) == 'BT.game.time.surface'){
+    
+    if (deparse(substitute(modelfunc)) == 'BT.result.time.surface'){
+      model <- "result"
+    } else {
+      model <- "game"
+    }
+    
+    for (i in 1:sections){
+      
+      hard.court <- update.strengths(pastdata, get(paste("BT.", model, ".time.hard", sep = "")))
+      clay.court <- update.strengths(pastdata, get(paste("BT.", model, ".time.clay", sep = "")))
+      grass.court <- update.strengths(pastdata, get(paste("BT.", model, ".time.grass", sep = "")))
+      
+      hard.strengths <- as.numeric(hard.court[,2])
+      clay.strengths <- as.numeric(clay.court[,2])
+      grass.strengths <- as.numeric(grass.court[,2])
+      
+      pastdata <- rbind(pastdata, get(paste("testdata", i, sep="")))
+      players <- hard.court[,1]
+      
+      assign(paste("testdata.hard", i, sep=""), get(paste("testdata", i, sep=""))[get(paste("testdata", i, sep=""))$Surface == 'Hard',])
+      assign(paste("testdata.clay", i, sep=""), get(paste("testdata", i, sep=""))[get(paste("testdata", i, sep=""))$Surface == 'Clay',])
+      assign(paste("testdata.grass", i, sep=""), get(paste("testdata", i, sep=""))[get(paste("testdata", i, sep=""))$Surface == 'Grass',])
+
+      if (nrow(get(paste("testdata.hard", i, sep=""))) != 0){
+        analysis.hard <- analysis(players, hard.strengths, get(paste("testdata.hard", i, sep="")), win.prob)
+        analysis.df <- rbind(analysis.df, analysis.hard)
+      }
+      if (nrow(get(paste("testdata.clay", i, sep=""))) != 0){
+        analysis.clay <- analysis(players, clay.strengths, get(paste("testdata.clay", i, sep="")), win.prob)
+        analysis.df <- rbind(analysis.df, analysis.clay)
+      }
+      if (nrow(get(paste("testdata.grass", i, sep=""))) != 0){
+        analysis.grass <- analysis(players, grass.strengths, get(paste("testdata.grass", i, sep="")), win.prob)
+        analysis.df <- rbind(analysis.df, analysis.grass)
+      }
+
+      
+    }
+    
+      if (grepl("synth",deparse(substitute(testdata)))){
+        fed.index <- which(players == 'player1')
+        fed.strength.hard <- exp(hard.strengths[fed.index])
+        fed.strength.clay <- exp(clay.strengths[fed.index])
+        fed.strength.grass <- exp(grass.strengths[fed.index])
+        
+    } else {
+        fed.index <- which(players == 'Federer R.')
+        fed.strength.hard <- exp(hard.strengths[fed.index])
+        fed.strength.clay <- exp(clay.strengths[fed.index])
+        fed.strength.grass <- exp(grass.strengths[fed.index])
+    }
+      
+      norm.strengths.hard <- rep(0, length(hard.strengths))
+      norm.strengths.clay <- rep(0, length(clay.strengths))
+      norm.strengths.grass <- rep(0, length(grass.strengths))
+      
+      for (i in (1:length(hard.strengths))){
+        norm.strengths.hard[i] <- exp(hard.strengths[i])/fed.strength.hard
+        norm.strengths.clay[i] <- exp(clay.strengths[i])/fed.strength.clay 
+        norm.strengths.grass[i] <- exp(grass.strengths[i])/fed.strength.grass 
+      }
+      
+      hard.strengths.df <-data.frame(players, norm.strengths.hard)
+      clay.strengths.df <-data.frame(players, norm.strengths.clay)
+      grass.strengths.df <-data.frame(players, norm.strengths.grass)
+      
+      colnames(hard.strengths.df) <- c('Players','HardCourtStrength')
+      colnames(clay.strengths.df) <- c('Players','ClayCourtStrength')
+      colnames(grass.strengths.df) <- c('Players','GrassCourtStrength')
+      
+      hard.strengths.df <- hard.strengths.df[order(-hard.strengths.df$HardCourtStrength),, drop=FALSE]
+      clay.strengths.df <- clay.strengths.df[order(-clay.strengths.df$ClayCourtStrength),, drop=FALSE]
+      grass.strengths.df <- grass.strengths.df[order(-grass.strengths.df$GrassCourtStrength),, drop=FALSE]
+      
+      output.list$HardCourtStrength <- hard.strengths.df
+      output.list$ClayCourtStrength <- clay.strengths.df
+      output.list$GrassCourtStrength <- grass.strengths.df
+    
+  } else {
+  
+    for (i in 1:sections){
+      player.strengths <- update.strengths(pastdata, modelfunc)
+      pastdata <- rbind(pastdata, get(paste("testdata", i, sep="")))
+      players <- player.strengths[,1]
+      strengths <- as.numeric(player.strengths[,2])
+      analysis.sec <- analysis(players, strengths, get(paste("testdata",i, sep="")), win.prob)
+      analysis.df <- rbind(analysis.df, analysis.sec)
+    
+    }
+    
+# The latest normalized strength estimates for the players
+    norm.strengths <- rep(0, length(strengths))
+    
+    if (grepl("synth",deparse(substitute(testdata)))){
+      fed.index <- which(players == 'player1')
+      fed.strength <- exp(strengths[fed.index])
+    } else {
+      fed.index <- which(players == 'Federer R.')
+      fed.strength <- exp(strengths[fed.index])
+    }
+    
+    for (i in (1:length(strengths))){
+      norm.strengths[i] <- exp(strengths[i])/fed.strength
+    }
+    strengths.df <- data.frame(players, norm.strengths)
+    colnames(strengths.df) <- c('Players', 'Strengths')
+    strengths.df <- strengths.df[order(-strengths.df$Strength),,drop=FALSE]
+    output.list$strengths <- strengths.df
+  }
+
+# Scoring rule estimates for the model
+  
+  if (grepl("synth",deparse(substitute(testdata)))){
+    vals <- matrix(c(pred.acc(analysis.df), av.win.prob(analysis.df), av.log.win.prob(analysis.df), av.brier(analysis.df), av.spherical(analysis.df)), ncol=1, byrow=TRUE)
+    colnames(vals) <- c(deparse(substitute(modelfunc)))
+    rownames(vals) <- c('Prediction Accuracy', 'Average Probability of Actual Winner', 'Avergae log Probability of Actual Winner', 'Average Brier Score', 'Average Spherical Score')
+  } else {
+      vals <- matrix(c(pred.acc(analysis.df), av.win.prob(analysis.df), av.log.win.prob(analysis.df), av.brier(analysis.df), av.spherical(analysis.df), roi(analysis.df)),  ncol=1, byrow=TRUE)
+      colnames(vals) <- c(deparse(substitute(modelfunc)))
+      rownames(vals) <- c('Prediction Accuracy', 'Average Probability of Actual Winner', 'Avergae log Probability of Actual Winner','Average Brier Score', 'Average Spherical Score','ROI')
+  }
+  
+# Detailed Scoring Rules
+  det.scoring <- data.frame(brier(analysis.df), spherical(analysis.df))
+  colnames(det.scoring) <- c('Brier Score','Spherical Score')
+
+# Plot the model calibration
+  #calibration(analysis.df, as.character(deparse(substitute(modelfunc))))
+  
+# Output the results
+  output.list$analysis <- analysis.df
+  output.list$scoring <- as.data.frame(vals)
+  output.list$detailedScoring <- det.scoring
+  
+  return(output.list)
+}
+```
+
+```{r}
+#BT.result.model <- simulate(df, test.df, 1, BT.result, BT.result.winprob)
+#BT.result.model
+```
+
+```{r}
+#BT.game.model <- simulate(df, test.df, 1, BT.game, BT.game.winprob)
+#BT.game.model
+```
+
+```{r}
+#BT.result.time.model <- simulate(df, test.df, 1, BT.result.time, BT.result.winprob)
+#BT.result.time.model
+```
+
+```{r}
+#BT.game.time.model <- simulate(df, test.df, 1, BT.game.time, BT.game.winprob)
+#BT.game.time.model
+```
+
+```{r}
+BT.result.surface.model <- simulate(df, test.df, 1, BT.result.time.surface, BT.result.winprob)
+BT.result.surface.model
+```
+
+```{r}
+BT.game.surface.model <- simulate(df, test.df, 1, BT.game.time.surface, BT.game.winprob)
+BT.game.surface.model
+```
+
+MAKING SYNTHETIC DATA
+
+```{r}
+synth.N <- 50 #Number of players
+synth.players <- rep('', synth.N) 
+
+for (i in (1:synth.N)){
+  synth.players[i] <- paste('player', i, sep="") #Player names
+}
+
+synth.true.strength <- log(rev(seq(0.01,1,length.out=synth.N))) #True Player Strength
+synth.true.strength.Hard <- log(rev(seq(0.01,1,length.out=synth.N))) #True Player Strength on Hard
+synth.true.strength.Clay <- log(exp(rev(seq(-1,0,length.out=synth.N)))) #True Player Strength on Clay
+synth.true.strength.Grass  <- log(sin(rev((seq(0.01,pi/2,length.out=synth.N))))) #True Player Strength on Grass
+```
+
+```{r}
+BT.synth.result <- function(no.hist, no.test, inc.surface){
+  
+  output <- list()
+  
+  dates <- sort(sample(seq(as.Date('01/01/20', format = '%d/%m/%y'), as.Date('31/12/22', format = '%d/%m/%y'), by='d'), no.hist + no.test, replace=TRUE), decreaing=TRUE)
+  matchinfo <- c()
+  
+  for (i in (1:(no.hist+no.test))){
+    
+    surface <- sample(c('Hard', 'Clay', 'Grass'), 1, replace=TRUE)
+    
+    players <- sample(synth.players, 2)
+  
+    player.A.index <- which(synth.players == players[1])
+    player.B.index <- which(synth.players == players[2])
+  
+    if (inc.surface){
+      if (surface == "Hard"){
+        player.A.strength <- synth.true.strength.Hard[player.A.index]
+        player.B.strength <- synth.true.strength.Hard[player.B.index]
+      } else if (surface == "Clay"){
+        player.A.strength <- synth.true.strength.Clay[player.A.index]
+        player.B.strength <- synth.true.strength.Clay[player.B.index]
+      } else {
+        player.A.strength <- synth.true.strength.Grass[player.A.index]
+        player.B.strength <- synth.true.strength.Grass[player.B.index]
+      }
+      
+    } else {
+    player.A.strength <- synth.true.strength[player.A.index]
+    player.B.strength <- synth.true.strength[player.B.index]
+    }
+  
+    p <- BT.result.winprob(player.A.strength, player.B.strength) #Prob of A beating B
+  
+    winner <- sample(players, 1, prob = c(p,1-p))
+    loser <- setdiff(players, winner)
+  
+    matchinfo <- c(matchinfo, surface, winner, loser)
+  }
+  
+  synth.data <- as.data.frame(t(matrix(matchinfo, nrow=3)))
+  synth.data <- cbind(dates,synth.data)
+  colnames(synth.data) <- c('Date', 'Surface', 'Winner', 'Loser')
+  
+  synth.data$W1 <- NA
+  synth.data$W2 <- NA
+  synth.data$W3 <- NA
+  synth.data$W4 <- NA
+  synth.data$W5 <- NA
+  synth.data$L1 <- NA
+  synth.data$L2 <- NA
+  synth.data$L3 <- NA
+  synth.data$L4 <- NA
+  synth.data$L5 <- NA
+  synth.data$B365W <- NA
+  synth.data$B365L <- NA
+  synth.data$EXW <- NA
+  synth.data$EXL <- NA
+  synth.data$LBW <- NA
+  synth.data$LBL <- NA
+  synth.data$PSW <- NA
+  synth.data$PSL <- NA
+  
+  output$hist <- synth.data[1:no.hist,]
+  output$test <- synth.data[((no.hist+1):(no.hist+no.test)),]
+  
+  return(output)
+}
+```
+
+```{r}
+BT.synth.game <- function(no.hist, no.test, inc.surface = FALSE){
+  
+  output <- list()
+  
+  dates <- sort(sample(seq(as.Date('01/01/20', format = '%d/%m/%y'), as.Date('31/12/22', format = '%d/%m/%y'), by='d'), no.hist + no.test, replace=TRUE), decreaing=TRUE)
+  matchinfo <- c()
+  
+  for (i in (1:(no.hist+no.test))){
+    
+    no.sets <- sample(c(3,5), 1, replace=TRUE)
+    surface <- sample(c('Hard', 'Clay', 'Grass'), 1, replace=TRUE)
+    
+    players <- sample(synth.players, 2)
+  
+    player.A.index <- which(synth.players == players[1])
+    player.B.index <- which(synth.players == players[2])
+  
+    if (inc.surface){
+      if (surface == "Hard"){
+        player.A.strength <- synth.true.strength.Hard[player.A.index]
+        player.B.strength <- synth.true.strength.Hard[player.B.index]
+      } else if (surface == "Clay"){
+        player.A.strength <- synth.true.strength.Clay[player.A.index]
+        player.B.strength <- synth.true.strength.Clay[player.B.index]
+      } else {
+        player.A.strength <- synth.true.strength.Grass[player.A.index]
+        player.B.strength <- synth.true.strength.Grass[player.B.index]
+      }
+      
+    } else {
+    player.A.strength <- synth.true.strength[player.A.index]
+    player.B.strength <- synth.true.strength[player.B.index]
+    }
+  
+    player.A.game.scores <- rep(0, 5)
+    player.B.game.scores <- rep(0, 5)
+    
+    player.A.sets.won <- 0
+    player.B.sets.won <- 0
+    
+    p <- BT.result.winprob(player.A.strength, player.B.strength) #Prob of A beating B in a single game
+    
+      for (i in (1:no.sets)){
+        
+        if (player.A.sets.won >= ceiling(no.sets/2) | player.B.sets.won >= ceiling(no.sets/2)){
+          break
+        } else {
+        
+        while (player.A.game.scores[i] < 6 & player.B.game.scores[i] < 6){
+          game.winner <- sample(players, 1, prob=c(p,1-p))
+          ifelse(game.winner == players[1], player.A.game.scores[i] <- player.A.game.scores[i]+1, player.B.game.scores[i] <- player.B.game.scores[i]+1)
+        }
+        
+        # AT THIS POINT SOMEONE HAS REACHED 6 GAMES WON
+        
+        if (player.A.game.scores[i] == 6 & player.B.game.scores[i] < 5){ #IF A HAS WON THE SET
+          player.A.sets.won <- player.A.sets.won + 1
+          
+        }  else if (player.A.game.scores[i] < 5 & player.B.game.scores[i] == 6){ #IF B HAS WON THE SET
+          player.B.sets.won <- player.B.sets.won + 1
+          
+        } else { #ELSE THE SCORE MUST BE 6 - 5 IN SOMEONE'S FAVOUR
+          game.winner <- sample(players, 1, prob=c(p,1-p))
+          ifelse(game.winner == players[1], player.A.game.scores[i] <- player.A.game.scores[i]+1, player.B.game.scores[i] <- player.B.game.scores[i]+1)
+          
+          if (player.A.game.scores[i] == 7 & player.B.game.scores[i] < 6){
+            player.A.sets.won <- player.A.sets.won + 1
+          
+          }  else if (player.A.game.scores[i] < 6 & player.B.game.scores[i] == 7){
+            player.B.sets.won <- player.B.sets.won + 1
+            
+          }  else { # At this point the score must be 6 - 6  
+            game.winner <- sample(players, 1, prob=c(p,1-p))
+            ifelse(game.winner == players[1], player.A.game.scores[i] <- player.A.game.scores[i]+1, player.B.game.scores[i] <- player.B.game.scores[i]+1)
+            ifelse(game.winner == players[1], player.A.sets.won <- player.A.sets.won +1, player.B.sets.won <- player.B.sets.won +1)
+          }
+      }
+      }
+    }
+    
+    if (player.A.sets.won > player.B.sets.won){
+      winner <- players[1]
+      winner.game.scores <- player.A.game.scores
+      loser <- players[2]
+      loser.game.scores <- player.B.game.scores
+    } else {
+      winner <- players[2]
+       winner.game.scores <- player.B.game.scores
+      loser <- players[1]
+      loser.game.scores <- player.A.game.scores
+    }
+
+  
+    matchinfo <- c(matchinfo, surface,no.sets, winner, loser, winner.game.scores, loser.game.scores)
+  }
+  
+  synth.data <- as.data.frame(t(matrix(matchinfo, nrow=14)))
+  synth.data <- cbind(dates,synth.data)
+  colnames(synth.data) <- c('Date', 'Surface','Best Of', 'Winner', 'Loser','W1','W2','W3','W4','W5','L1','L2','L3','L4','L5')
+  
+  synth.data$W1 <- as.numeric(synth.data$W1)
+  synth.data$W2 <- as.numeric(synth.data$W2)
+  synth.data$W3 <- as.numeric(synth.data$W3)
+  synth.data$W4 <- as.numeric(synth.data$W4)
+  synth.data$W5 <- as.numeric(synth.data$W5)
+  synth.data$L1 <- as.numeric(synth.data$L1)
+  synth.data$L2 <- as.numeric(synth.data$L2)
+  synth.data$L3 <- as.numeric(synth.data$L3)
+  synth.data$L4 <- as.numeric(synth.data$L4)
+  synth.data$L5 <- as.numeric(synth.data$L5)
+  
+  synth.data$B365W <- NA
+  synth.data$B365L <- NA
+  synth.data$EXW <- NA
+  synth.data$EXL <- NA
+  synth.data$LBW <- NA
+  synth.data$LBL <- NA
+  synth.data$PSW <- NA
+  synth.data$PSL <- NA
+  
+  output$hist <- synth.data[1:no.hist,]
+  output$test <- synth.data[((no.hist+1):(no.hist+no.test)),]
+  
+  return(output)
+}
+```
+
+```{r}
+#synth.rs.df <- BT.synth.result(5e3,2e3,inc.surface = TRUE)
+#synth.gs.df <- BT.synth.game(5e3,2e3,inc.surface = TRUE)
+#synth.r.df <- BT.synth.result(5e3,2e3,inc.surface = FALSE)
+#synth.g.df <- BT.synth.game(5e3,2e3,inc.surface = FALSE)
+```
+
+```{r}
+#synth.BT.result.model <- simulate(synth.r.df$hist, synth.r.df$test, 1, BT.result, BT.result.winprob)
+#synth.BT.result.model
+```
+
+```{r}
+#synth.BT.game.model <- simulate(synth.g.df$hist, synth.g.df$test, 1, BT.game, BT.game.winprob)
+#synth.BT.game.model
+```
+
+```{r}
+#synth.BT.result.time.model <- simulate(synth.r.df$hist, synth.r.df$test, 1, BT.result.time, BT.result.winprob)
+#synth.BT.result.time.model
+```
+
+```{r}
+#synth.BT.game.time.model <- simulate(synth.g.df$hist, synth.g.df$test, 1, BT.game.time, BT.game.winprob)
+#synth.BT.game.time.model
+```
+
+```{r}
+#synth.BT.result.time.surface.model <- simulate(synth.rs.df$hist, synth.rs.df$test, 1, BT.result.time.surface, BT.result.winprob)
+#synth.BT.result.time.surface.model
+```
+
+```{r}
+#synth.BT.game.time.surface.model <- simulate(synth.gs.df$hist, synth.gs.df$test, 1, BT.game.time.surface, BT.game.winprob)
+#synth.BT.game.time.surface.model
+```

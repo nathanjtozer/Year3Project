@@ -1,0 +1,40 @@
+```{r}
+BT.result.model
+BT.result.time.model
+BT.result.time.surface.model
+BT.game.model
+BT.game.time.model
+BT.game.time.surface.model
+```
+
+```{r}
+roi2 <- function(analysis.df){
+  new.analysis.df <- analysis.df[!is.na(analysis.df$BookiesProbActualWinner),]
+  M <- nrow(new.analysis.df)
+  spent <- 0
+  won <- 0
+  
+  for (i in (1:M)){
+    if (new.analysis.df$IsPredRight[i] == 1){
+      if (new.analysis.df$PredProbActualWinner[i] > as.numeric(new.analysis.df$BookiesProbActualWinner[i])){
+        spent <- spent + 1
+        won <- won + new.analysis.df$AverageWinnerBOdds[i] 
+      }
+    } else {
+      if (new.analysis.df$PredProbActualLoser[i] > as.numeric(new.analysis.df$BookiesProbActualLoser[i])){
+        spent <- spent + 1
+      }
+    }
+  }
+  return((won-spent)*100/spent)
+}
+```
+
+```{r}
+roi2(BT.result.model$analysis)
+roi2(BT.result.time.model$analysis)
+roi2(BT.result.time.surface.model$analysis)
+roi2(BT.game.model$analysis)
+roi2(BT.game.time.model$analysis)
+roi2(BT.game.time.surface.model$analysis)
+```

@@ -1,0 +1,142 @@
+```{r}
+load('BTScalar1.RData')
+load('BTScalar2.RData')
+```
+
+```{r}
+BT.result.model$scoring
+BT.result.time.model$scoring
+BT.result.surface.model$scoring
+BT.result.time.surface.model$scoring
+BT.game.model$scoring
+BT.game.time.model$scoring
+BT.game.surface.model$scoring
+BT.game.time.surface.model$scoring
+```
+
+```{r}
+roi2 <- function(analysis.df){
+  new.analysis.df <- analysis.df[!is.na(analysis.df$BookiesProbActualWinner),]
+  M <- nrow(new.analysis.df)
+  spent <- 0
+  won <- 0
+  
+  for (i in (1:M)){
+    if (new.analysis.df$IsPredRight[i] == 1){
+      if (new.analysis.df$PredProbActualWinner[i] > as.numeric(new.analysis.df$BookiesProbActualWinner[i])){
+        spent <- spent + 1
+        won <- won + new.analysis.df$AverageWinnerBOdds[i] 
+      }
+    } else {
+      if (new.analysis.df$PredProbActualLoser[i] > as.numeric(new.analysis.df$BookiesProbActualLoser[i])){
+        spent <- spent + 1
+      }
+    }
+  }
+  return((won-spent)*100/spent)
+}
+```
+
+```{r}
+roi2(BT.result.model$analysis)
+roi2(BT.result.time.model$analysis)
+roi2(BT.result.surface.model$analysis)
+roi2(BT.result.time.surface.model$analysis)
+roi2(BT.game.model$analysis)
+roi2(BT.game.time.model$analysis)
+roi2(BT.game.surface.model$analysis)
+roi2(BT.game.time.surface.model$analysis)
+```
+
+
+```{r}
+calibration <- function(analysis.df, name){
+
+  p.bins <- seq(from=0, to=1, length.out= 64)
+  
+  bins <- cut(analysis.df$PredProbActualWinner, breaks = p.bins, include.lowest = TRUE, right = FALSE, ordered_result = TRUE)
+  count <- unname(summary(bins))
+  
+  j <- length(count)
+  
+  xvals <- seq(from=0.5,to=1,length.out=32)
+  k <- length(xvals)
+  yvals <- rep(0,length(xvals))
+  
+  for (i in (1:k)){
+    yvals[k+1-i] <- count[j+1-i]/(count[i]+count[j+1-i])
+  }
+  png(paste('Calibration', name, '.png', sep=""), width=512, height=512)
+  scatter.smooth(x=xvals, y=yvals, main= "Model Calibration", xlab="Predicted Probability", ylab="Probability of Prediction Being Correct", cex.main=2, cex.axis=1.6,cex.lab=1.6, ylim=c(0.5,1))
+  lines(xvals,xvals,col='red')
+  dev.off()
+}
+```
+
+```{r}
+calibration(BT.result.model$analysis, 'BT.R')
+calibration(BT.result.time.model$analysis,' BT.R+T')
+calibration(BT.result.surface.model$analysis, 'BT.R+S')
+calibration(BT.result.time.surface.model$analysis, 'BT.R+T+S')
+calibration(BT.game.model$analysis, 'BT.G')
+calibration(BT.game.time.model$analysis, 'BT.G+T')
+calibration(BT.game.surface.model$analysis, 'BT.G+S')
+calibration(BT.game.time.surface.model$analysis, 'BT.G+T+S')
+```
+
+```{r}
+test.df <- read.csv(file="TestDataSet.csv")
+test.df <- test.df[-c((39:42))]
+test.df <- test.df[1:2610,]
+test.df <- test.df[test.df$Comment == 'Completed',]
+M <- nrow(test.df)
+
+#surface.count <-  table(test.df$Surface)
+#surface.count
+
+players <- BT.result.surface.model$HardCourtStrength$Players
+hard <- rep(NA,length(players))
+clay <- rep(NA,length(players))
+grass <- rep(NA,length(players))
+strengths <- rep(NA, length(players))
+mat <- matrix(NA, nrow=length(players), ncol=2)
+
+for (i in (1:length(players))){
+  test.df.player <- test.df[test.df$Winner == players[i] | test.df$Loser == players[i],]
+  surface.count <- table(test.df.player$Surface)
+  count.df <- as.data.frame(surface.count)
+  
+  hard.sur <- ifelse('Hard' %in% count.df$Var1, as.numeric(count.df$Freq[which(count.df$Var1 == 'Hard')]), 0)
+  clay.sur <- ifelse('Clay' %in% count.df$Var1, as.numeric(count.df$Freq[which(count.df$Var1 == 'Clay')]), 0)
+  grass.sur <- ifelse('Grass' %in% count.df$Var1, as.numeric(count.df$Freq[which(count.df$Var1 == 'Grass')]), 0)
+  matches <- hard.sur + clay.sur + grass.sur
+  
+  hard[i] <- BT.result.surface.model$HardCourtStrength$HardCourtStrength[which(players[i]==BT.result.surface.model$HardCourtStrength$Players)]
+  clay[i] <- BT.result.surface.model$ClayCourtStrength$ClayCourtStrength[which(players[i]==BT.result.surface.model$ClayCourtStrength$Players)]
+  grass[i] <- BT.result.surface.model$GrassCourtStrength$GrassCourtStrength[which(players[i]==BT.result.surface.model$GrassCourtStrength$Players)]
+  
+  mat[i,1] <- players[i]
+  mat[i,2] <- (1/matches) * (hard.sur*hard[i] + clay.sur*clay[i] + grass.sur*grass[i])
+}
+
+stre <- as.data.frame(mat)
+colnames(stre) <- c('Players','Strengths')
+stre <- stre[order(stre$Strengths, decreasing=TRUE),,drop=FALSE]
+stre[stre$Strengths != NaN,]
+```
+
+```{r}
+surface.count
+```
+
+```{r}
+BT.result.surface.model$HardCourtStrength
+BT.result.surface.model$ClayCourtStrength
+BT.result.surface.model$GrassCourtStrength
+```
+
+```{r}
+sim.BT.result
+roi2(sim.BT.result$analysis)
+calibration(sim.BT.result$analysis, 'BT.dist')
+```
