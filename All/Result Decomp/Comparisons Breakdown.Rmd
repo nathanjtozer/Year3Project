@@ -1,0 +1,111 @@
+```{r}
+# Importing the results that we wish to predict with our model
+test.df <- read.csv(file="TestDataSet.csv")
+test.df <- test.df[-c((39:42))]
+test.df <- test.df[1:2610,]
+
+# Again we only consider matches that where won by tennis alone
+test.df <- test.df[test.df$Comment == 'Completed',]
+#test.df <- test.df[test.df$WRank != 'N/A',]
+#test.df <- test.df[test.df$LRank != 'N/A',]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(test.df))){
+  
+  if (is.na(test.df$W1[i])){
+    test.df$W1[i] <- 0
+  }
+  if (is.na(test.df$W2[i])){
+    test.df$W2[i] <- 0
+    }
+  if (is.na(test.df$W3[i])){
+  test.df$W3[i] <- 0
+    }
+  if (is.na(test.df$W4[i])){
+    test.df$W4[i] <- 0
+    }
+  if (is.na(test.df$W5[i])){
+    test.df$W5[i] <- 0
+  }
+  if (is.na(test.df$L1[i])){
+    test.df$L1[i] <- 0
+  }
+  if (is.na(test.df$L2[i])){
+    test.df$L2[i] <- 0
+    }
+  if (is.na(test.df$L3[i])){
+    test.df$L3[i] <- 0
+    }
+  if (is.na(test.df$L4[i])){
+    test.df$L4[i] <- 0
+    }
+  if (is.na(test.df$L5[i])){
+    test.df$L5[i] <- 0
+  }
+}
+```
+
+```{r}
+load('BTscalardf.RData')
+load('BTdistdf.RData')
+load('GLMunresdf.RData')
+load('GLMresdf.RData')
+```
+
+```{r}
+# This section calculates various scoring measures for our model
+
+# Prediction accuracy of the model
+pred.acc <- function(analysis.df){
+  return(sum(analysis.df$IsPredRight)*100/nrow(analysis.df))
+}
+
+# Average log probability assigned to the actual winner
+av.log.win.prob <- function(analysis.df){
+  return(mean(log(analysis.df$PredProbActualWinner)))
+}
+```
+
+```{r}
+hard <- which(test.df$Surface == 'Hard')
+clay <- which(test.df$Surface == 'Clay')
+grass <- which(test.df$Surface == 'Grass')
+GS <- which(test.df$Series == 'Grand Slam')
+nonGS <- which(test.df$Series != 'Grand Slam')
+
+hard2 <- which(test.df2$Surface == 'Hard')
+clay2 <- which(test.df2$Surface == 'Clay')
+grass2 <- which(test.df2$Surface == 'Grass')
+GS2 <- which(test.df2$Series == 'Grand Slam')
+nonGS2 <- which(test.df2$Series != 'Grand Slam')
+```
+
+```{r}
+BTscalar.hard <- BTscalar[hard,]
+BTscalar.clay <- BTscalar[clay,]
+BTscalar.grass <- BTscalar[grass,]
+BTscalar.GS <- BTscalar[GS,]
+BTscalar.nonGS <- BTscalar[nonGS,]
+
+BTdist.hard <- BTdist[hard,]
+BTdist.clay <- BTdist[clay,]
+BTdist.grass <- BTdist[grass,]
+BTdist.GS <- BTdist[GS,]
+BTdist.nonGS <- BTdist[nonGS,]
+
+GLMunres.hard <- GLMunres[hard2,]
+GLMunres.clay <- GLMunres[clay2,]
+GLMunres.grass <- GLMunres[grass2,]
+GLMunres.GS <- GLMunres[GS2,]
+GLMunres.nonGS <- GLMunres[nonGS2,]
+
+GLMres.hard <- GLMres[hard2,]
+GLMres.clay <- GLMres[clay2,]
+GLMres.grass <- GLMres[grass2,]
+GLMres.GS <- GLMres[GS2,]
+GLMres.nonGS <- GLMres[nonGS2,]
+```
+
+```{r}
+av.log.win.prob(GLMres.nonGS)
+```

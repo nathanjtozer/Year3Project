@@ -1,0 +1,29 @@
+---
+title: "Untitled"
+author: "Nathan Tozer"
+date: "29/03/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+data <- read.csv('comparisondata.csv', header=FALSE)
+data[1,1] <- 63.9525692
+s.r.mat <- data.frame(ncol=6, nrow=4)
+for (i in 1:4){
+  for (j in 1:6){
+    s.r.mat[i,j] <- as.numeric(data[i,j])
+  }
+}
+colnames(s.r.mat) <- c('Pred. Acc.', 'Av. Prob.', 'Av. Log Prob.','Av. Brier', 'Av. Sph.', 'ROI')
+rownames(s.r.mat) <- c('BT Scalar', 'BT Dist.','GLM Unrestr.','GLM Restr.')
+```
+
+```{r}
+png('SRcompar.png', height= 512+256, width = 512)
+heatmap(t(s.r.mat), Colv= NA, Rowv=NA, scale='row', ,main='Scoring Rules', cexRow=1, cexCol = 1, margins=c(6,6))
+dev.off()
+```
