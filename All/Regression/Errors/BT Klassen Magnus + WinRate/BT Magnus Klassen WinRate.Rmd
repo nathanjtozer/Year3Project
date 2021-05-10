@@ -1,0 +1,350 @@
+---
+title: "Regression"
+author: "Nathan Tozer"
+date: "28/01/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+load('BT.wav.strengths.RData')
+stre <- stre[stre$Strengths != NaN,]
+```
+
+```{r}
+# Training Data Set
+training.df <- read.csv(file="TrainingDataSet.csv")
+training.df <- training.df[-c((37:42))][1:5270,]
+
+# Remove matches that didn't finish, or have mssing information
+training.df <- training.df[training.df$Comment == 'Completed',]
+training.df <- training.df[training.df$WRank != 'N/A',]
+training.df <- training.df[training.df$LRank != 'N/A',]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(training.df))){
+  
+  if (is.na(training.df$W1[i])){
+    training.df$W1[i] <- 0
+  }
+  if (is.na(training.df$W2[i])){
+    training.df$W2[i] <- 0
+    }
+  if (is.na(training.df$W3[i])){
+    training.df$W3[i] <- 0
+    }
+  if (is.na(training.df$W4[i])){
+    training.df$W4[i] <- 0
+    }
+  if (is.na(training.df$W5[i])){
+    training.df$W5[i] <- 0
+  }
+  if (is.na(training.df$L1[i])){
+    training.df$L1[i] <- 0
+  }
+  if (is.na(training.df$L2[i])){
+    training.df$L2[i] <- 0
+    }
+  if (is.na(training.df$L3[i])){
+    training.df$L3[i] <- 0
+    }
+  if (is.na(training.df$L4[i])){
+    training.df$L4[i] <- 0
+    }
+  if (is.na(training.df$L5[i])){
+    training.df$L5[i] <- 0
+  }
+}
+
+```
+
+```{r}
+# Importing the results that we wish to predict with our model
+test.df <- read.csv(file="TestDataSet.csv")
+test.df <- test.df[-c((39:42))]
+test.df <- test.df[1:2610,]
+
+# Again we only consider matches that where won by tennis alone
+test.df <- test.df[test.df$Comment == 'Completed',]
+test.df <- test.df[test.df$WRank != 'N/A',]
+test.df <- test.df[test.df$LRank != 'N/A',]
+
+# Filling un-played sets as 0-0 games won.
+for (i in (1:nrow(test.df))){
+  
+  if (is.na(test.df$W1[i])){
+    test.df$W1[i] <- 0
+  }
+  if (is.na(test.df$W2[i])){
+    test.df$W2[i] <- 0
+    }
+  if (is.na(test.df$W3[i])){
+  test.df$W3[i] <- 0
+    }
+  if (is.na(test.df$W4[i])){
+    test.df$W4[i] <- 0
+    }
+  if (is.na(test.df$W5[i])){
+    test.df$W5[i] <- 0
+  }
+  if (is.na(test.df$L1[i])){
+    test.df$L1[i] <- 0
+  }
+  if (is.na(test.df$L2[i])){
+    test.df$L2[i] <- 0
+    }
+  if (is.na(test.df$L3[i])){
+    test.df$L3[i] <- 0
+    }
+  if (is.na(test.df$L4[i])){
+    test.df$L4[i] <- 0
+    }
+  if (is.na(test.df$L5[i])){
+    test.df$L5[i] <- 0
+  }
+}
+```
+
+```{r}
+df <- rbind(training.df, test.df)
+```
+
+```{r}
+# This section calculates various scoring measures for our model
+
+# Prediction accuracy of the model
+pred.acc <- function(analysis.df){
+  return(sum(analysis.df$IsPredRight)*100/nrow(analysis.df))
+}
+
+# Average probability assigned to the actual winner
+av.win.prob <- function(analysis.df){
+  return(mean(analysis.df$PredProbActualWinner))
+}
+
+# Average log probability assigned to the actual winner
+av.log.win.prob <- function(analysis.df){
+  return(mean(log(analysis.df$PredProbActualWinner)))
+}
+
+# Returns a calibration graph of the model
+calibration <- function(analysis.df, name){
+
+  p.bins <- seq(from=0, to=1, length.out= 64)
+  
+  bins <- cut(analysis.df$PredProbActualWinner, breaks = p.bins, include.lowest = TRUE, right = FALSE, ordered_result = TRUE)
+  count <- unname(summary(bins))
+  
+  j <- length(count)
+  
+  xvals <- seq(from=0.5,to=1,length.out=32)
+  k <- length(xvals)
+  yvals <- rep(0,length(xvals))
+  
+  for (i in (1:k)){
+    yvals[k+1-i] <- count[j+1-i]/(count[i]+count[j+1-i])
+  }
+  png(paste('Calibration', name, '.png', sep=""), width=512, height=512)
+  scatter.smooth(x=xvals, y=yvals, main= "Model Calibration", xlab="Predicted Probability", ylab="Probability of Prediction Being Correct", cex.main=2, cex.axis=1.6,cex.lab=1.6, ylim=c(0.5,1))
+  lines(xvals,xvals,col='red')
+  dev.off()
+}
+
+# Return on investment when placing a pass-line bet when our model is more confident then the bookmakers
+roi <- function(analysis.df){
+  new.analysis.df <- analysis.df[!is.na(analysis.df$BookiesProbActualWinner),]
+  M <- nrow(new.analysis.df)
+  spent <- 0
+  won <- 0
+  
+  for (i in (1:M)){
+    if (new.analysis.df$IsPredRight[i] == 1){
+      if (new.analysis.df$PredProbActualWinner[i] > as.numeric(new.analysis.df$BookiesProbActualWinner[i])){
+        spent <- spent + 1
+        won <- won + new.analysis.df$AverageWinnerBOdds[i] 
+      }
+    } else {
+      if (new.analysis.df$PredProbActualLoser[i] > as.numeric(new.analysis.df$BookiesProbActualLoser[i])){
+        spent <- spent + 1
+      }
+    }
+  }
+  return((won-spent)*100/spent)
+}
+
+# Brier Scores
+brier <- function(analysis.df){
+  return(0.5*(((analysis.df$PredProbActualWinner - 1)^2)+((analysis.df$PredProbActualLoser)^2)))
+}
+
+# Average Brier Score
+av.brier <- function(analysis.df){
+  briers <- 0.5*(((analysis.df$PredProbActualWinner - 1)^2)+((analysis.df$PredProbActualLoser)^2))
+  return(mean(briers))
+}
+
+# spherical Scores
+spherical <- function(analysis.df){
+  return(-1*(analysis.df$PredProbActualWinner)/(sqrt(analysis.df$PredProbActualWinner^2 + analysis.df$PredProbActualLoser^2)))
+}
+
+# Average Spherical Score
+av.spherical <- function(analysis.df){
+  sphericals <- -1*(analysis.df$PredProbActualWinner)/(sqrt(analysis.df$PredProbActualWinner^2 + analysis.df$PredProbActualLoser^2))
+  return(mean(sphericals))
+}
+```
+
+```{r}
+# Logisitc Regression Using ATP RAnk
+N <- nrow(training.df)
+X.BT <- rep(0,N)
+X.wr <- rep(0,N)
+X.h2h <- rep(0,N)
+ymat.BT <- matrix(0, N, 2)
+
+for (i in(1:N)){
+  
+  winner <- training.df$Winner[i]
+  loser <- training.df$Loser[i]
+  
+  winner.BT <- ifelse(training.df$Winner[i] %in% stre$Players, stre$Strengths[which(stre$Players == training.df$Winner[i])], min(as.numeric(stre$Strengths)))
+  loser.BT <- ifelse(training.df$Loser[i] %in% stre$Players, stre$Strengths[which(stre$Players == training.df$Loser[i])], min(as.numeric(stre$Strengths)))
+  
+  winner.BT <- as.numeric(winner.BT)
+  loser.BT <- as.numeric(loser.BT)
+  
+  X.BT[i] <- log(winner.BT/loser.BT)
+  
+  winner.wr <- sum(training.df$Winner[1:i-1] == winner) / (sum(training.df$Winner[1:i-1] == winner) + sum(training.df$Loser[1:i-1] == winner))
+  loser.wr <- sum(training.df$Winner[1:i-1] == loser) / (sum(training.df$Winner[1:i-1] == loser) + sum(training.df$Loser[1:i-1] == loser))
+
+  if (is.nan(winner.wr)){
+    winner.wr = 0
+  }
+  if (is.nan(loser.wr)){
+    loser.wr = 0
+  }
+  
+  X.wr[i] <- winner.wr - loser.wr
+  
+  ymat.BT[i,1] <- 1 
+}
+
+BT.fit <- glm(ymat.BT ~ 0 + X.BT + X.wr, family=binomial(link=logit))
+summary(BT.fit)
+```
+
+```{r}
+M <- nrow(test.df)
+X.BT.test <- rep(0,M)
+X.wr.test <- rep(0,M)
+
+for (i in (1:M)){
+  
+  winner <- test.df$Winner[i]
+  loser <- test.df$Loser[i]
+  
+  winner.BT.test <- ifelse(test.df$Winner[i] %in% stre$Players, stre$Strengths[which(stre$Players == test.df$Winner[i])], min(as.numeric(stre$Strengths)))
+  loser.BT.test <- ifelse(test.df$Loser[i] %in% stre$Players, stre$Strengths[which(stre$Players == test.df$Loser[i])], min(as.numeric(stre$Strengths)))
+  
+  winner.BT.test <- as.numeric(winner.BT.test)
+  loser.BT.test <- as.numeric(loser.BT.test)
+  
+  X.BT.test[i] <- log(winner.BT.test/loser.BT.test)
+  
+  winner.wr.test <- sum(df$Winner[1:N+i-1] == winner) / (sum(df$Winner[1:N+i-1] == winner) + sum(df$Loser[1:N+i-1] == winner))
+  loser.wr.test <- sum(df$Winner[1:N+i-1] == loser) / (sum(df$Winner[1:N+i-1] == loser) + sum(df$Loser[1:N+i-1] == loser))
+  
+  if (is.nan(winner.wr.test)){
+    winner.wr.test = 0
+  }
+  if (is.nan(loser.wr.test)){
+    loser.wr.test = 0
+  }
+  
+  
+  X.wr.test[i] <- winner.wr.test - loser.wr.test
+  
+}
+X.BT.test <- as.data.frame(X.BT.test)
+X.wr.test <- as.data.frame(X.wr.test)
+X.test <- cbind(X.BT.test, X.wr.test)
+
+colnames(X.test) <- c('X.BT', 'X.wr')
+
+BT.fit.pred <- predict(BT.fit, newdata=X.test, type='response')
+```
+
+```{r}
+# Produces Analysis Dataframe
+
+  M <- nrow(test.df)
+  match.info <- c()
+
+  for (i in (1:M)){
+    
+# Actual winner - our model does not know this is the winner
+    winner = test.df$Winner[i]
+   
+# Actual loser - our model does not know this is the loser
+    loser = test.df$Loser[i]
+    
+# Calculating the implied bookmaker probabilities
+    winner.av.bodds <- (test.df$B365W[i] + test.df$EXW[i] + test.df$LBW[i] + test.df$PSW[i])/4
+    winner.av.bprob <- 1/winner.av.bodds
+    
+    loser.av.bodds <- (test.df$B365L[i] + test.df$EXL[i] + test.df$LBL[i] + test.df$PSL[i])/4
+    loser.av.bprob <- 1/loser.av.bodds
+    
+    winner.implied.bprob <- winner.av.bprob / (winner.av.bprob + loser.av.bprob)
+    loser.implied.bprob <- loser.av.bprob / (winner.av.bprob + loser.av.bprob)
+    
+# Predicted probability that the actual winner wins
+    pred.win.prob <- BT.fit.pred[i]
+    
+# Predicted probability that the actual loser wins
+    pred.lose.prob <- 1- pred.win.prob
+    
+# If the above two are the same, we chose a winner at random
+    if (pred.win.prob == pred.lose.prob){
+      pred.winner <- sample(c(winner,loser), 1, prob=c(0.5,0.5))
+    } else {
+      pred.winner <- ifelse(pred.win.prob > pred.lose.prob, winner, loser)
+    }
+    
+  #pred.winner <- sample(c(winner,loser), 1, prob=c(pred.win.prob, pred.lose.prob))
+    
+# Returns value 1 if our prediction is correct.
+    is.pred.right <- ifelse(winner == pred.winner, 1, 0)
+    
+# Stores the calculated value every match in a vector
+    match.info <- c(match.info,winner.av.bodds,winner.implied.bprob, pred.win.prob, winner, is.pred.right, loser, pred.lose.prob, loser.implied.bprob, loser.av.bodds)
+    
+  }
+  
+# Turn the above vector into a dataframe  
+  rank.analysis.df <- as.data.frame(t(matrix(match.info, nrow = 9)))
+  colnames(rank.analysis.df) <- c('AverageWinnerBOdds','BookiesProbActualWinner','PredProbActualWinner','ActualWinner', 'IsPredRight','ActualLoser','PredProbActualLoser','BookiesProbActualLoser','AverageLoserBOdds')
+  
+  rank.analysis.df$PredProbActualWinner = as.numeric(rank.analysis.df$PredProbActualWinner)
+  rank.analysis.df$PredProbActualLoser = as.numeric(rank.analysis.df$PredProbActualLoser)
+  rank.analysis.df$IsPredRight = as.numeric(rank.analysis.df$IsPredRight)
+  rank.analysis.df$AverageWinnerBOdds = as.numeric(rank.analysis.df$AverageWinnerBOdds)
+  rank.analysis.df$AverageLoserBOdds = as.numeric(rank.analysis.df$AverageLoserBOdds)
+  rank.analysis.df$BookiesProbActualWinner = as.numeric(rank.analysis.df$BookiesProbActualWinner)
+  rank.analysis.df$BookiesProbActualLoser = as.numeric(rank.analysis.df$BookiesProbActualLoser)
+```
+
+```{r}
+av.brier(rank.analysis.df)
+av.log.win.prob(rank.analysis.df)
+av.spherical(rank.analysis.df)
+av.win.prob(rank.analysis.df)
+pred.acc(rank.analysis.df)
+roi(rank.analysis.df)
+calibration(rank.analysis.df, 'BT.Magnus.KLassen.wr')
+```
