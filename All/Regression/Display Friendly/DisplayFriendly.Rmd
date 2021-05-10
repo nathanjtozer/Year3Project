@@ -1,0 +1,72 @@
+```{r}
+df <- MODEL.DATA[order(MODEL.DATA$AvSph, decreasing=TRUE),]
+df[(grepl('15',df$Selected)==FALSE & grepl('1,',df$Selected)==FALSE & grepl('2,',df$Selected)==FALSE & grepl('3,',df$Selected)==FALSE & grepl('4,',df$Selected)==FALSE),]
+
+```
+
+```{r}
+selections <- read.csv('SelectionMatrix.csv', header=FALSE)
+selections[1,1] <- 0
+colnames(selections) <- c('A1','B1','C1','D1','E1','F1','G1','H1','I1','A2','B2','C2','D2','E2','F2','G2','H2','I2')
+rownames(selections) <- colnames(Xy[,1:18])
+rownames(selections)[17] <- 'SetsDrop'
+
+for (i in 1:16){
+  selections[,i] <- as.numeric(selections[,i])
+}
+
+selections <- as.matrix(selections)
+```
+
+```{r}
+library(RColorBrewer)
+greyscale <- colorRampPalette(brewer.pal(9,'Greys'))(2)
+```
+
+```{r}
+png('ModelSelection.png', width=512, height=512)
+heatmap(selections, Colv =NA, Rowv =NA, scale='column', col=greyscale, main='Model Selection Results', xlab='Model', add.expr = abline(v=9.5, col='red', lwd=4), cexRow = 1, cexCol = 1, margins = c(4,4))
+dev.off()
+```
+
+```{r}
+scoring.rules <- as.data.frame(matrix(ncol=18, nrow=6))
+colnames(scoring.rules) <- colnames(selections)
+rownames(scoring.rules) <- colnames(MODEL.DATA)[2:7]
+indexes <- c(135509,67441,16849,49860,259062,198338,41292,85986,940,25629,226607,226607,12551,31971,12530,3282,3282,940)
+
+for (i in 1:18){
+  for (j in 2: 7)
+  scoring.rules[j-1,i] <- MODEL.DATA[indexes[i],j]
+}
+
+scoring.rules <- as.matrix(scoring.rules)
+```
+
+```{r}
+png('ScoringRules.png', width=512, height=512)
+heatmap(scoring.rules, Colv= NA, Rowv=NA, scale='row', main='Scoring Rules', xlab='Model', add.expr = abline(v=9.5, col='red', lwd=4), cexRow=1, cexCol = 1, margins=c(4,6))
+dev.off()
+```
+
+```{r}
+png('ScoringRulesNoRestr.png', width=512, height=512)
+heatmap(scoring.rules[,1:9], Colv= NA, Rowv=NA, scale='row', main='Scoring Rules - No Restrictions', xlab='Model', cexRow=1, cexCol=1, margins=c(4,6))
+dev.off()
+```
+
+```{r}
+png('ScoringRulesRestr.png', width=512, height=512)
+heatmap(scoring.rules[,10:18], Colv= NA, Rowv=NA, scale='row', main='Scoring Rules - With Restrictions', xlab='Model', cexRow=1, cexCol=1, margins=c(4,6))
+dev.off()
+```
+
+```{r}
+png('HLtests.png', width=1024, height=512)
+HL.tests <- MODEL.DATA[indexes,8]
+barplot(HL.tests, names.arg = c('A1','B1','C1','D1','E1','F1','G1','H1','I1','A2','B2','C2','D2','E2','F2','G2','H2','I2'), cex.names=1.8, cex.axis = 1.8, cex.main=2, cex.lab = 1.6, xlab='Model', ylab='H-L Test Statistic', main='Hosmer-Lemeshaw Test Results', ylim=c(0,140))
+abline(h=qchisq(0.9,8), col='red', lty='dashed')
+abline(h=qchisq(0.95,8), col='red', lty='dashed')
+abline(h=qchisq(0.99,8), col='red', lty='dashed')
+dev.off()
+```
